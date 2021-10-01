@@ -1,0 +1,220 @@
+---
+title: "Music Sentiment Analysis (Part 2)"
+output: html_notebook
+---
+
+To see how the data was collected for this project, please refer to the *Music_Sentiment_Analysis_(Part_1).ipynb* file.  Since the Genius and Spotify libraries in R are outdated, python served as a better language to collect the information in this analysis.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+```{r, message=FALSE, warning=FALSE, fig.width=9, echo=FALSE}
+#Get Relevant Libraries
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidytext) #Includes several linguistic maps and lexicons and language processing tools
+library(textdata) #Includes additional lexicon libraries
+library(reshape2)
+```
+```{r, message=FALSE, warning=FALSE, fig.width=9, echo=FALSE}
+#Import Data gathered using python
+df <- read_csv("music_data.csv", col_types = cols())
+```
+
+## Step 3: Joining Lexicon
+To analyze the lyrics, I will first need to download a lexicon to give sentiments and emotions to the lyrics.  NRC was chosen since it has a sizable set of emotions compared to other libraries I researched which just have sentiments (AFINN and bing).
+
+After choosing the lexicon, I processed the song lyrics by tokenizing by word, removing stop words, and joining the NRC word library to derive emotions from the lyrics.  Note that some words have multiple sentiments associated with them and this creates several new rows.  Also, there will be a row for each time a certain word is said in a song (for example, words said in the chorus show up several times), though, this is intended for my analysis.
+```{r}
+nrc <- get_sentiments("nrc") #Lexicon with list of 2 sentiments and 8 emotions emotions
+
+#Start by getting a list of unique words from the songs.  This creates a long data set with the words, though they are not unique and are individually counted
+song_lyrics <- df %>%
+  unnest_tokens(output = word, input = lyric)
+
+#Remove stop words
+song_lyrics <- song_lyrics %>%
+  filter(!word %in% stop_words$word)
+
+#Do an inner join so that if there is no sentiment, it gets removed from the table
+lyrics_with_emotion <- song_lyrics %>% inner_join(nrc, by = "word")
+```
+
+## Step 4: Lyric Analysis
+
+The first visualization I'd like to develop to explore the data is to view the frequency of certain words categorized by emotion and song to see what words are used the most.  For this, I filtered the data to look at words that were said more than 5 times in a single song.  This visualization gives an abundance of data and is meant to generate questions to allow for more focused visualizations.  This viz gives preference to words said in the choruses of songs, but also shows a general trend of emotions typically hit.  For example, visually, I can see that anger, sadness, and fear are more prevalent emotions in the lyrics while disgust is only very seldom used.
+```{r, fig.width= 12}
+lyrics_with_emotion_analysis <- lyrics_with_emotion %>%
+  group_by(sentiment,title) %>%
+  count(word) %>%
+  filter(n > 5)
+
+ggplot(lyrics_with_emotion_analysis, aes(x = word, y = n, fill = title)) +
+  facet_wrap(~sentiment, scales = "free_x", nrow = 2) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  theme(legend.position = "bottom") +
+  ylab("Occurances per Song") +
+  xlab("Word") +
+  labs(fill = "Song Title") +
+  ggtitle("Frequent Words Categorized by Emotion and Song")
+```
+
+From the previous visualization, I would like to continue my analysis by breaking apart the sentiments and emotions and analyzing total emotions/sentiments by song.  In the first graph below, it gives a count of the positive and negative words said by ordered by the total number of sentiment words said.  Looking at the graph, I note two large insights.  
+
+First, the three songs with the most number of sentiment words are almost the only ones where more positive sentiment words are said than negative sentiment ones.  However, looking at some of my personal favorite songs (Lavender Bones and Wavelength), the negative sentiment words greatly outnumber the positive sentiment ones.  This trend holds true for all of their singles and leads me to believe that the lyrics written are emotionally associated with more negative feelings.
+
+The second insight is that the number of sentiment words in a song does not seem to correlate with it being a good song.  Some of my other favorite songs (Coffee at Midnight and Shh!) do not have as high counts, but are still great songs in my opinion.
+
+
+```{r, fig.width= 12}
+emotion_count <- lyrics_with_emotion %>%
+  filter((sentiment %in% c("positive","negative"))) %>%
+  group_by(title,sentiment) %>%
+  count(sentiment) %>%
+  rename("sentiment_words" = n) %>%
+  ungroup(sentiment) %>%
+  mutate("total_sentiment_words" = sum(sentiment_words))
+
+ggplot(emotion_count, aes(x = reorder(title,-total_sentiment_words), y = sentiment_words, fill = sentiment)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 75, hjust = 1.1, vjust = 1.0)) +
+  ylab("Emotional Word Count") +
+  xlab("Song Title") +
+  labs(fill = "Sentiment") +
+  ggtitle("Sentiment Word Count by Song")
+```
+
+This second visualization breaks down the emotional word counts into the frequency that each is used in the songs.  The legend is organized by the number of times a word with that emotion is used across the entire data set (sadness being the highest, surprise being the lowest).  Looking visually at the legend, sadness, anger, and fear are the top 3 emotions (similar to what was seen in the first visualization).  However, there does seem to be a wide amount of variance in what the dominant emotions are from song to song, including some of my favorites.  For example, Lavender Bones has a sizable amount of trust related words and Shh! has a a large amount of surprise related words.
+
+```{r, fig.width= 12}
+emotion_count <- lyrics_with_emotion %>%
+  filter(!(sentiment %in% c("positive","negative"))) %>%
+  group_by(title,sentiment) %>%
+  count(sentiment) %>%
+  rename("emotion_words" = n) %>%
+  ungroup(sentiment) %>%
+  mutate("total_emotion_words" = sum(emotion_words)) %>%
+  ungroup() %>%
+  group_by(sentiment) %>%
+  mutate("total_emotion_said_all" = sum(emotion_words))
+
+ggplot(emotion_count, aes(x = reorder(title,-total_emotion_words), y = emotion_words, fill = reorder(sentiment,-total_emotion_said_all))) +
+  geom_col(position = "fill") +
+  theme(axis.text.x = element_text(angle = 75, hjust = 1.1, vjust = 1.0)) +
+  ylab("Emotional Word Frequency") +
+  xlab("Song Title") +
+  labs(fill = "Emotion") +
+  ggtitle("Emotional Word Frequency by Song")
+```
+
+Since it has came up several times, I think having a simple graph of the counts of each emotion would be a powerful visualization to more clearly communicate the distribution.  As seen in other visualizations, sadness is the most frequently occurring emotion; however, it is only about twice as frequent as the least used emotion (surprise) and overall, there are no large outliers of emotions to avoid.
+
+```{r}
+total_emotion <- emotion_count %>%
+  ungroup() %>%
+  group_by(sentiment) %>%
+  summarize("Emotion Count" = sum(emotion_words))
+
+ggplot(total_emotion, aes(x = reorder(sentiment, -`Emotion Count`), y = `Emotion Count`, fill = sentiment)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1.05),
+        legend.position = "none") +
+  xlab("Emotion") +
+  ylab("Emotion Word Count") +
+  ggtitle("Count of Emotion Words by Emotion")
+```
+Instead of focusing on individual songs, I want to shift my analysis up a step to bodies of work (EP/Albums in this case).  Since during the song analysis above, I determined that the number of sentiment words didn't have a strong effect on my taste for the song, I am going to look at the overall frequency of each sentiment first to see if there was any shift from positive to negative or vice versa during the bands time together.  Looking at it, there debut EP had more negative sentiments proportionally that their two albums but the albums are roughly even with around 62.5% of all sentiment containing words being negative.
+```{r}
+album_list <- df %>%
+  group_by(album) %>%
+  count(album) %>%
+  filter(n > 2)
+
+album_analysis <- lyrics_with_emotion %>%
+  filter(album %in% album_list$album) %>%
+  filter(sentiment %in% c("positive","negative")) %>%
+  group_by(album,sentiment) %>%
+  count(sentiment) %>%
+  rename("emotional_word_count" = n)
+
+ggplot(album_analysis, aes(x = factor(album, levels = c("Sidewinder", "Skinny Dipping", "Pink Elephant")), y = emotional_word_count, fill = sentiment)) +
+  geom_col(position = "fill") +
+  theme(legend.position = "right") +
+  xlab("EP/Album") +
+  ylab("Sentiment Frequency") +
+  ggtitle("Sentiment Frequncy by EP/Album (Chronological)") +
+  labs(fill = "Sentiment")
+```
+
+## Step 5: Audio Feature Analysis
+Spotify has developed subjective metrics to describe songs audio qualities (descriptions can be found under the *AudioFeaturesObject* on Spotify's API reference page).  To begin my exploration of these values, I plotted a histogram of the values to see what distributions present themselves in the data.
+
+Some interesting distributions I see include a middle of the road danceability with high energy.  This makes sense because it is rock music and it is more "head banging" than full on dancing and the high energy is very characteristic of the fast pace and high intensity of the genre.  The mode shows a very interesting distribution between major and minor keys with the vast majority of the songs being in a major tonality.
+
+Acousticness shows what is expected (almost none of the songs are acoustic).  However, some songs rank high in liveness which seems odd as all of the songs are stuido tracks and makes me want to explore it further.  For valence (positive or negative sounding music), it seems to be the middle of the road, however, I would like to explore for additional knowledge since the sentiment analysis of the lyrics was insightful.
+
+```{r}
+df_feat <- df %>%
+  select(-lyric,-song_id) %>%
+  melt(id.vars = c("artist","title","album")) %>%
+  filter((value >= 0 & value <= 1)) %>%
+  filter(!(variable %in% c("key", "instrumentalness", "speechiness") ))
+
+ggplot(df_feat, aes(x = value, fill = variable)) +
+  geom_histogram(binwidth = 0.05) +
+  facet_wrap(~variable) +
+  theme(legend.position = "none") +
+  xlab("Value (Scale 0-1)") +
+  ylab("Song Count") +
+  ggtitle("Histograms of Audio Features")
+# Note the code below is used to find the colors of this graph to match the colors with graphs later on 
+# library(scales)
+# show_col(hue_pal()(6))
+```
+
+Liveness is a feature that determines the presence of an audience in the recording.  All of these are studio recordings (meaning there was no audience); however, looking at the values, I noticed a trend that some of my favorite songs appear in the top quartile.  Using some domain knowledge of production techniques and the songs, I hypothesize that the Spotify's algorithm is detecting gang vocals or heavily stacked vocals as an "audience".  This makes me think this is a good production technique for me to implement during my recordings instead of just doubling vocals.
+```{r}
+df_live <- df_feat %>%
+  filter(variable == "liveness")
+
+ggplot(df_live, aes(x = reorder(title,-value), y = value)) +
+  geom_col(fill = "#619CFF") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1.0, vjust = 0.5)) +
+  xlab("Song") +
+  ylab("Liveness Score (0-1)") +
+  ggtitle("Liveness Score by Song")
+```
+
+Looking at valence, I do not see any trend among my favorite songs.  However, I did notice that the two songs with the lowest valence (Drink To Drown and Silk & Satin) are songs I often skip listening to the albums.  Note that this may not be entirely due to valence though because these songs are also much slower and I would theorize have less energy.
+```{r}
+df_live <- df_feat %>%
+  filter(variable == "valence")
+
+ggplot(df_live, aes(x = reorder(title,-value), y = value)) +
+  geom_col(fill = "#F564E3") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1.0, vjust = 0.5)) +
+  xlab("Song") +
+  ylab("Valence Score (0-1)") +
+  ggtitle("Valence Score by Song")
+```
+
+To verify my prediction above, I created a graph showing the energy of the songs and both Drink To Drown and Silk & Satin to appear in the lowest three.  However, all of Stand Atlantic's discography tends to have higher energy and these songs are outliers among their tracks.
+
+```{r}
+df_live <- df_feat %>%
+  filter(variable == "energy")
+
+ggplot(df_live, aes(x = reorder(title,-value), y = value)) +
+  geom_col(fill = "#B79F00") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1.0, vjust = 0.5)) +
+  xlab("Song") +
+  ylab("Energy Score (0-1)") +
+  ggtitle("Energy Score by Song")
+```
+## Conclusions
+
+From the analysis I have gathered the following takeaways to experiment with in my own music.<br><br>
+1. For the genre selected, it tends to lyrically focus around negative sentiments and emotions.  When writing, I would suggest to draw inspiration from times in my life where these emotions were more prominent.<br>
+2. From a production standpoint, write high energy songs in a major tonality (fast paced, guitars with distortion, avoid using groovy basslines and stick with consistently timed notes) to replicate this style.<br>
+3. Experiment with large gang vocals and "stadium rock" production techniques.
